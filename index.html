@@ -1,7 +1,7 @@
-<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><style>:root{padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)}[hidden]{display:none!important}body{margin:0}img{max-width:100%}</style><title>Labo Techno Pâtissier</title>
+<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><style>:root{padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)}[hidden]{display:none!important}body{margin:0}img{max-width:100%}</style><title>Labo Techno</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <meta name="theme-color" content="#1f4fd1">
-<meta name="description" content="Révisions de technologie professionnelle du CAP Pâtissier.">
+<meta name="description" content="Révisions de technologie professionnelle : CAP Pâtissier, CAP Boulanger, CAP Charcutier-traiteur.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&display=swap">
@@ -190,6 +190,13 @@ details.sec>summary .vid{font-family:var(--f-body);font-size:12px;font-weight:70
 .okmsg{color:var(--ok);font-size:14px;font-weight:700}
 .field{display:flex;flex-direction:column;gap:6px}
 .code-in{letter-spacing:.3em;font-size:22px;font-weight:800;text-align:center}
+
+.welcome h1{color:inherit}
+.welcome p{color:inherit;opacity:.92}
+.feat{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
+.feat li{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px 14px 12px 44px;position:relative}
+.feat li::before{content:"";position:absolute;left:14px;top:15px;width:18px;height:18px;border-radius:50%;background:var(--ok-tint);border:2px solid var(--ok)}
+.feat li::after{content:"";position:absolute;left:20px;top:19px;width:5px;height:9px;border:solid var(--ok);border-width:0 2px 2px 0;transform:rotate(45deg)}
 </style>
 
 <header class="top"><div class="wrap">
@@ -910,11 +917,107 @@ function animToggle(id, restart){
 }
 
 
+/* ---------- client Supabase minimal (sans bibliothèque externe) ---------- */
+function makeSupabase(url, key){
+  url = url.replace(/\/+$/, "");
+  const SKEY = "labotechno-session";
+  let session = null; const subs = [];
+  try{ session = JSON.parse(localStorage.getItem(SKEY)); }catch(e){}
+  const now = () => Math.floor(Date.now() / 1000);
+  function store(s){
+    session = s && s.access_token ? {access_token:s.access_token, refresh_token:s.refresh_token, expires_at:s.expires_at || now() + (+s.expires_in || 3600), user:s.user || (session && session.user) || null} : null;
+    try{ if(session) localStorage.setItem(SKEY, JSON.stringify(session)); else localStorage.removeItem(SKEY); }catch(e){}
+  }
+  function emit(ev){ subs.forEach(cb => { try{ cb(ev, session); }catch(e){} }); }
+  async function call(path, opt){
+    let r; try{ r = await fetch(url + path, opt); }catch(e){ return {data:null, error:{message:"Pas de connexion au serveur (réseau)."}}; }
+    const txt = await r.text(); let body = null; try{ body = txt ? JSON.parse(txt) : null; }catch(e){ body = txt; }
+    if(!r.ok) return {data:null, error:{status:r.status, message:(body && (body.msg || body.message || body.error_description || body.error)) || ("Erreur " + r.status)}};
+    return {data:body, error:null};
+  }
+  async function refresh(){
+    if(!session || !session.refresh_token) return false;
+    const {data, error} = await call("/auth/v1/token?grant_type=refresh_token", {method:"POST", headers:{apikey:key, "Content-Type":"application/json"}, body:JSON.stringify({refresh_token:session.refresh_token})});
+    if(error){ if(error.status && error.status < 500){ store(null); emit("SIGNED_OUT"); } return false; }
+    store(data); emit("TOKEN_REFRESHED"); return true;
+  }
+  async function fresh(){ if(session && session.expires_at && now() > session.expires_at - 60) await refresh(); }
+  function headers(extra){ return Object.assign({apikey:key, "Content-Type":"application/json", Authorization:"Bearer " + (session ? session.access_token : key)}, extra || {}); }
+  // Lien magique : les jetons arrivent dans l'adresse (#access_token=…)
+  async function fromUrl(){
+    const h = new URLSearchParams(location.hash.slice(1));
+    if(h.get("error_description")){ const m = h.get("error_description"); history.replaceState(null, "", location.pathname + location.search); return m; }
+    if(!h.get("access_token")) return null;
+    store({access_token:h.get("access_token"), refresh_token:h.get("refresh_token"), expires_in:h.get("expires_in"), expires_at:+h.get("expires_at") || 0});
+    history.replaceState(null, "", location.pathname + location.search);
+    const {data} = await call("/auth/v1/user", {headers:headers()});
+    if(data && data.id){ session.user = data; store(session); emit("SIGNED_IN"); } else store(null);
+    return null;
+  }
+  const auth = {
+    urlError:null,
+    async init(){ auth.urlError = await fromUrl(); await fresh(); },
+    async getSession(){ await fresh(); return {data:{session}}; },
+    onAuthStateChange(cb){ subs.push(cb); return {data:{subscription:{unsubscribe(){ const i = subs.indexOf(cb); if(i >= 0) subs.splice(i, 1); }}}}; },
+    async signInWithOtp({email, options}){
+      const rt = options && options.emailRedirectTo ? "?redirect_to=" + encodeURIComponent(options.emailRedirectTo) : "";
+      const {error} = await call("/auth/v1/otp" + rt, {method:"POST", headers:{apikey:key, "Content-Type":"application/json"}, body:JSON.stringify({email, create_user:true})});
+      return {error};
+    },
+    async verifyOtp({email, token, type}){
+      let res = await call("/auth/v1/verify", {method:"POST", headers:{apikey:key, "Content-Type":"application/json"}, body:JSON.stringify({type:type || "email", email, token})});
+      if(res.error && (type || "email") === "email"){ // certains modèles envoient le code d'inscription
+        const r2 = await call("/auth/v1/verify", {method:"POST", headers:{apikey:key, "Content-Type":"application/json"}, body:JSON.stringify({type:"signup", email, token})});
+        if(!r2.error) res = r2; }
+      if(res.error) return {data:null, error:res.error};
+      store(res.data); emit("SIGNED_IN"); return {data:{session}, error:null};
+    },
+    async signOut(){ if(session) await call("/auth/v1/logout", {method:"POST", headers:headers()}); store(null); emit("SIGNED_OUT"); return {error:null}; }
+  };
+  function from(table){
+    const st = {method:"GET", filters:[], order:null, body:null, ret:false, single:false, maybe:false, upsert:false, cols:"*"};
+    const enc = v => encodeURIComponent(String(v));
+    const run = async () => {
+      await fresh();
+      const q = [];
+      if(st.method === "GET" || st.ret) q.push("select=" + enc(st.cols));
+      st.filters.forEach(([k, op, v]) => q.push(k + "=" + (op === "eq" ? "eq." + enc(v) : "in.(" + v.map(x => '"' + String(x).replace(/"/g, '\\"') + '"').map(enc).join(",") + ")")));
+      if(st.order) q.push("order=" + enc(st.order));
+      const prefer = [];
+      if(st.method !== "GET") prefer.push(st.ret ? "return=representation" : "return=minimal");
+      if(st.upsert) prefer.push("resolution=merge-duplicates");
+      const {data, error} = await call("/rest/v1/" + table + (q.length ? "?" + q.join("&") : ""), {method:st.method, headers:headers(prefer.length ? {Prefer:prefer.join(",")} : {}), body:st.body == null ? undefined : JSON.stringify(st.body)});
+      if(error) return {data:null, error};
+      const rows = Array.isArray(data) ? data : data == null ? [] : [data];
+      if(st.single){ return rows.length === 1 ? {data:rows[0], error:null} : {data:null, error:{message:rows.length ? "Plusieurs lignes" : "Aucune ligne"}}; }
+      if(st.maybe) return {data:rows[0] || null, error:null};
+      return {data:st.method === "GET" || st.ret ? rows : null, error:null};
+    };
+    const b = {
+      select(cols){ if(st.method === "GET") st.cols = cols || "*"; else { st.ret = true; st.cols = cols || "*"; } return b; },
+      eq(k, v){ st.filters.push([k, "eq", v]); return b; },
+      in(k, v){ st.filters.push([k, "in", v]); return b; },
+      order(c, o){ st.order = c + (o && o.ascending === false ? ".desc" : ".asc"); return b; },
+      single(){ st.single = true; return b; }, maybeSingle(){ st.maybe = true; return b; },
+      insert(o){ st.method = "POST"; st.body = o; return b; },
+      upsert(o){ st.method = "POST"; st.body = o; st.upsert = true; return b; },
+      update(o){ st.method = "PATCH"; st.body = o; return b; },
+      delete(){ st.method = "DELETE"; return b; },
+      then(ok, ko){ return run().then(ok, ko); }
+    };
+    return b;
+  }
+  async function rpc(fn, args){ await fresh(); const {data, error} = await call("/rest/v1/rpc/" + fn, {method:"POST", headers:headers(), body:JSON.stringify(args || {})}); return {data, error}; }
+  return {auth, from, rpc};
+}
+
+
 /* ---------- version en ligne (Supabase) ---------- */
 let SB = null, USER = null, PROFILE = null, syncMsg = "", pushT = null, loginState = {step:"email", email:"", msg:"", err:""};
 let G = {groups:[], cur:null, students:[], loaded:false, err:"", newCode:""};
-const SB_LIB = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js";
-function loadScript(src){ return new Promise((ok, ko) => { if(window.supabase) return ok(); const s = document.createElement("script"); s.src = src; s.onload = ok; s.onerror = () => ko(new Error("Bibliothèque de connexion introuvable (réseau ?)")); document.head.appendChild(s); }); }
+const LKEY = "labotechno-login";
+try{ const l = JSON.parse(localStorage.getItem(LKEY)); if(l && l.email && Date.now() - (l.at || 0) < 3600e3){ loginState.email = l.email; loginState.step = l.step || "email"; } }catch(e){}
+function saveLogin(){ try{ localStorage.setItem(LKEY, JSON.stringify({email:loginState.email, step:loginState.step, at:Date.now()})); }catch(e){} }
 function stripState(X){ const o = JSON.parse(JSON.stringify(X)); delete o.session; delete o.lastResult; delete o.offset; return o; }
 function schedulePush(){ if(!SB || !USER) return; clearTimeout(pushT); pushT = setTimeout(pushNow, 1500); }
 async function pushNow(){
@@ -945,25 +1048,41 @@ async function afterAuth(session){
   await pullAll(); go(S.session ? "home" : "home");
 }
 async function initOnline(){
-  try{ await loadScript(SB_LIB); }catch(e){ loginState.err = e.message; go("login"); return; }
-  SB = window.supabase.createClient(CONFIG.supabaseUrl, CONFIG.supabaseKey, {auth:{persistSession:true, autoRefreshToken:true, detectSessionInUrl:true}});
-  SB.auth.onAuthStateChange((ev, session) => { if(ev === "SIGNED_IN" && session && (!USER || USER.id !== session.user.id)) afterAuth(session); });
-  const {data:{session}} = await SB.auth.getSession();
-  if(session) await afterAuth(session); else go("login");
+  const slow = setTimeout(() => { if(view.name === "boot"){ loginState.err = "Le serveur met du temps à répondre. Vérifie ta connexion, puis réessaie."; go("login"); } }, 8000);
+  try{
+    SB = window.supabase && window.supabase.createClient ? window.supabase.createClient(CONFIG.supabaseUrl, CONFIG.supabaseKey) : makeSupabase(CONFIG.supabaseUrl, CONFIG.supabaseKey);
+    if(SB.auth.init) await SB.auth.init();
+    if(SB.auth.urlError){ loginState.err = "Le lien de connexion a expiré ou a déjà servi. Demande un nouveau code."; loginState.step = "email"; }
+    SB.auth.onAuthStateChange((ev, session) => { if(ev === "SIGNED_IN" && session && (!USER || USER.id !== session.user.id)) afterAuth(session); });
+    const {data:{session}} = await SB.auth.getSession();
+    clearTimeout(slow);
+    if(session && session.user) await afterAuth(session); else go("login");
+  }catch(e){ clearTimeout(slow); loginState.err = "Connexion au serveur impossible : " + (e.message || e); go("login"); return; }
   window.addEventListener("online", pushNow);
   document.addEventListener("visibilitychange", () => { if(document.visibilityState === "visible" && USER && PROFILE){ pullPrat().then(() => { if(view.name !== "quiz") render(); }); } });
 }
 function loginView(){
   const L = loginState;
-  return `<div class="stack"><span class="eyebrow">Technologie professionnelle</span><h1>Connexion</h1>
-   <p class="muted">Pas de mot de passe : tu reçois un code par e-mail.</p></div>
+  return `<div class="card hero welcome"><span class="eyebrow" style="color:inherit;opacity:.85">CAP · Technologie professionnelle</span>
+     <h1 style="font-size:30px">Bienvenue sur Labo Techno</h1>
+     <p>Révise la techno de ton métier en 5 minutes par jour, sur ton téléphone.</p>
+     <div class="row wrapr">${FORMS.map(f => `<span class="chip" style="background:rgba(255,255,255,.18);color:inherit">${esc(f.titre)}</span>`).join("")}</div></div>
+   <ul class="feat">
+     <li><b>Fiches courtes</b> avec animations et lecture à voix haute</li>
+     <li><b>Quiz corrigés</b> : QCM, calculs, diagnostics de défauts, réponses écrites</li>
+     <li><b>Révisions du jour</b> au bon moment, pour ne rien oublier</li>
+     <li><b>Épreuve blanche</b> et suivi de tes compétences, validées par ton formateur</li></ul>
+   <div class="stack"><h2 id="connexion">${L.step === "email" ? "Se connecter" : "Entrer mon code"}</h2>
+   <p class="muted small">Pas de mot de passe : tu reçois un code par e-mail. Première fois ? C'est pareil, ton compte est créé automatiquement.</p></div>
    ${L.step === "email" ? `<form class="card" id="loginForm"><label class="field" for="email"><b>Ton adresse e-mail</b>
      <input type="text" id="email" inputmode="email" autocomplete="email" value="${esc(L.email)}" placeholder="prenom@exemple.fr"></label>
-     <button class="btn block" type="submit">Recevoir mon code</button>${L.err ? `<p class="err">${esc(L.err)}</p>` : ""}</form>`
+     <button class="btn block" type="submit" id="sendBtn">Recevoir mon code</button>${L.err ? `<p class="err" role="alert">${esc(L.err)}</p>` : ""}
+     ${L.email ? `<button class="link" type="button" data-act="havecode">J'ai déjà reçu un code</button>` : ""}</form>`
    : `<form class="card" id="codeForm"><p>Un e-mail a été envoyé à <b>${esc(L.email)}</b>. Tape le code reçu, ou touche le lien dans l'e-mail sur ce téléphone.</p>
      <label class="field" for="otp"><b>Code reçu</b><input type="text" id="otp" class="code-in" inputmode="numeric" autocomplete="one-time-code" maxlength="10"></label>
-     <button class="btn block" type="submit">Me connecter</button>${L.err ? `<p class="err">${esc(L.err)}</p>` : ""}
-     <button class="link" type="button" data-act="loginback">Changer d'adresse</button></form>`}
+     <button class="btn block" type="submit" id="codeBtn">Me connecter</button>${L.err ? `<p class="err" role="alert">${esc(L.err)}</p>` : ""}${L.info ? `<p class="okmsg">${esc(L.info)}</p>` : ""}
+     <div class="row wrapr"><button class="link" type="button" data-act="loginback">Changer d'adresse</button><button class="link" type="button" data-act="resend">Renvoyer un code</button></div>
+     <p class="small muted">Rien reçu ? Regarde dans les courriers indésirables (spams). Un nouveau code peut être demandé après 1 minute.</p></form>`}
    <p class="notice">Ton e-mail sert seulement à te connecter. Ton formateur voit ton pseudo et ta progression, rien d'autre.</p>`;
 }
 /* ---------- tableau de bord formateur ---------- */
@@ -1065,7 +1184,10 @@ document.addEventListener("click", async e => {
   else if(a === "delaccount"){ const {error} = await SB.rpc("supprimer_mon_compte"); if(error){ alertMsg("Suppression impossible : " + error.message); return; }
     try{ localStorage.removeItem(KEY); }catch(err){} await SB.auth.signOut(); USER = null; PROFILE = null; S = fresh(); confirmReset = false; loginState = {step:"email", email:"", err:"Ton compte et tes données ont été supprimés."}; go("login"); }
   else if(a === "logout"){ await pushNow(); await SB.auth.signOut(); USER = null; PROFILE = null; KEY = KEYBASE + ":local"; S = fresh(); G = {groups:[], cur:null, students:[], loaded:false, err:"", newCode:""}; loginState = {step:"email", email:"", err:""}; go("login"); }
-  else if(a === "loginback"){ loginState.step = "email"; loginState.err = ""; render(); }
+  else if(a === "loginback"){ loginState.step = "email"; loginState.err = ""; saveLogin(); render(); }
+  else if(a === "havecode"){ const em = document.getElementById("email"); if(em && em.value.trim()) loginState.email = em.value.trim(); loginState.step = "code"; loginState.err = ""; saveLogin(); render(); }
+  else if(a === "resend"){ b.disabled = true; const {error} = await SB.auth.signInWithOtp({email:loginState.email, options:{emailRedirectTo:location.origin + location.pathname, shouldCreateUser:true}});
+    loginState.err = error ? "Envoi impossible : " + traduire(error.message) : ""; if(!error) loginState.info = "Nouveau code envoyé."; render(); }
   else if(a === "lockprof"){ formOk = false; render(); }
   else if(a === "reloadcontent"){ b.disabled = true; b.textContent = "Chargement…"; await refreshContent(true); }
   else if(a === "selgroup"){ G.cur = v; G.newCode = ""; await loadStudents(); render(); }
@@ -1107,13 +1229,15 @@ document.addEventListener("submit", async e => {
     S.profile = {pseudo:p, groupe:code, parcours:pf}; save(); go("home"); }
   if(f.id === "calcForm"){ if(!String(S.session.val).trim()){ document.getElementById("calc").focus(); return; } check(); }
   if(f.id === "pinForm"){ if(document.getElementById("pin").value === String(CONFIG.pinFormateur)){ formOk = true; render(); } else document.getElementById("pinErr").hidden = false; }
-  if(f.id === "loginForm"){ const email = document.getElementById("email").value.trim(); loginState.email = email;
+  if(f.id === "loginForm"){ const email = document.getElementById("email").value.trim().toLowerCase(); loginState.email = email;
     if(!/^\S+@\S+\.\S+$/.test(email)){ loginState.err = "Adresse e-mail invalide."; render(); return; }
+    const btn = document.getElementById("sendBtn"); if(btn){ btn.disabled = true; btn.textContent = "Envoi en cours…"; }
+    if(!SB){ loginState.err = "Le serveur n'est pas joignable. Vérifie ta connexion et recharge la page."; render(); return; }
     const {error} = await SB.auth.signInWithOtp({email, options:{emailRedirectTo:location.origin + location.pathname, shouldCreateUser:true}});
-    if(error){ loginState.err = "Envoi impossible : " + error.message; render(); return; } loginState.step = "code"; loginState.err = ""; render(); }
-  if(f.id === "codeForm"){ const token = document.getElementById("otp").value.replace(/\s/g, "");
+    if(error){ loginState.err = "Envoi impossible : " + traduire(error.message); render(); return; } loginState.step = "code"; loginState.err = ""; saveLogin(); render(); }
+  if(f.id === "codeForm"){ loginState.info = ""; const token = document.getElementById("otp").value.replace(/\s/g, "");
     const {data, error} = await SB.auth.verifyOtp({email:loginState.email, token, type:"email"});
-    if(error){ loginState.err = "Code incorrect ou expiré."; render(); return; } loginState.err = ""; if(data && data.session && !USER) afterAuth(data.session); }
+    if(error){ loginState.err = "Code incorrect ou expiré."; render(); return; } loginState.err = ""; try{ localStorage.removeItem(LKEY); }catch(e){} if(data && data.session && !USER) afterAuth(data.session); }
   if(f.id === "groupForm"){ const nom = document.getElementById("gname").value.trim(); if(!nom) return;
     const gpar = (document.querySelector('input[name="gf"]:checked') || {}).value || FORMS[0].id;
     let code = randCode(), tries = 0, res;
@@ -1130,5 +1254,12 @@ document.addEventListener("submit", async e => {
   if(CONFIG.sheetId) refreshContent(false);
   if(ONLINE) initOnline(); else { view = {name: S.profile ? "home" : "onboard"}; render(); }
 })();
+
+function traduire(m){ m = String(m || "");
+  if(/rate limit|security purposes|seconds/i.test(m)) return "trop de demandes rapprochées. Attends une minute puis réessaie.";
+  if(/smtp|sending|confirmation email|magic link email/i.test(m)) return "le service d'envoi d'e-mails n'est pas encore bien réglé (réglages SMTP dans Supabase).";
+  if(/signups not allowed|not allowed/i.test(m)) return "la création de compte est désactivée dans Supabase (Authentication > Sign In / Providers).";
+  if(/invalid email|email address/i.test(m)) return "adresse e-mail refusée.";
+  return m; }
 </script>
 </html>

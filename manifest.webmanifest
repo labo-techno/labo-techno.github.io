@@ -1,7 +1,7 @@
 {
-  "name": "Labo Techno Pâtissier",
+  "name": "Labo Techno",
   "short_name": "Labo Techno",
-  "description": "Révisions de technologie professionnelle du CAP Pâtissier.",
+  "description": "Révisions de technologie professionnelle : CAP Pâtissier, Boulanger, Charcutier-traiteur.",
   "lang": "fr",
   "start_url": "./",
   "scope": "./",
