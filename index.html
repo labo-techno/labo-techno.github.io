@@ -170,8 +170,6 @@ details.sec>summary .vid{font-family:var(--f-body);font-size:12px;font-weight:70
 .top .who .chip{cursor:pointer;border:0;font:inherit;font-size:14px;font-weight:700}
 .sim{margin-left:0}
 .qimg{width:100%;max-height:260px;object-fit:cover;border-radius:10px;border:1px solid var(--line);background:var(--sunk)}
-.speak{appearance:none;display:inline-flex;align-items:center;gap:6px;border:1.5px solid var(--line);background:var(--surface);color:var(--accent);font:inherit;font-size:14px;font-weight:700;border-radius:99px;padding:6px 12px;min-height:40px;cursor:pointer;align-self:flex-start}
-.speak[aria-pressed="true"]{background:var(--tint);border-color:var(--accent)}
 .gl{appearance:none;border:0;background:none;padding:0;font:inherit;color:inherit;text-align:inherit;display:inline;text-decoration:underline dotted var(--accent);text-decoration-thickness:2px;text-underline-offset:3px;cursor:help}
 .sheet{position:fixed;left:0;right:0;bottom:0;z-index:20;background:var(--surface);border-top:2px solid var(--accent);box-shadow:0 -8px 24px rgba(0,0,0,.18);padding-bottom:env(safe-area-inset-bottom,0px)}
 .sheet .wrap{padding-block:16px;display:flex;flex-direction:column;gap:8px}
@@ -487,7 +485,7 @@ function check(){
   if(s.mode === "exam"){ save(); next(); return; }
   s.done = true; s.ok = ok; save(); render();
 }
-function next(){ const s = S.session; s.i++; stopSpeak(); if(s.i >= s.qs.length){ finish(); return; } prepQ(); save(); render(); window.scrollTo(0, 0); }
+function next(){ const s = S.session; s.i++; if(s.i >= s.qs.length){ finish(); return; } prepQ(); save(); render(); window.scrollTo(0, 0); }
 function finish(){
   const s = S.session, n = s.qs.length, good = s.res.filter(r => r.ok).length, score = n ? good / n : 0;
   const out = {mode:s.mode, mid:s.mid, n, good, errs:s.res.filter(r => !r.ok && QS[r.id]).map(r => r.id)};
@@ -500,19 +498,6 @@ function finish(){
   out.badges = checkBadges(); S.session = null; S.lastResult = out; save(); go("result");
 }
 
-/* ---------- synthèse vocale ---------- */
-let speaking = null;
-function canSpeak(){ return "speechSynthesis" in window; }
-function stopSpeak(){ if(canSpeak()) speechSynthesis.cancel(); speaking = null; document.querySelectorAll(".speak[aria-pressed=true]").forEach(b => b.setAttribute("aria-pressed", "false")); }
-function speak(key, text){
-  if(!canSpeak()) return; if(speaking === key){ stopSpeak(); return; } stopSpeak();
-  const u = new SpeechSynthesisUtterance(text.replace(/°C/g, " degrés").replace(/\s+/g, " ")); u.lang = "fr-FR"; u.rate = .95;
-  const v = speechSynthesis.getVoices().find(v => /^fr/i.test(v.lang)); if(v) u.voice = v;
-  u.onend = () => { if(speaking === key) stopSpeak(); }; speaking = key; speechSynthesis.speak(u);
-  const b = document.querySelector(`.speak[data-v="${key}"]`); if(b) b.setAttribute("aria-pressed", "true");
-}
-const SPK = `<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4z" fill="currentColor"/><path d="M16 8.5a5 5 0 010 7M18.5 6a8.5 8.5 0 010 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`;
-function speakBtn(key){ return canSpeak() ? `<button class="speak" data-act="speak" data-v="${esc(key)}" aria-pressed="${speaking === key}">${SPK}Écouter</button>` : ""; }
 
 /* ---------- glossaire dans les fiches ---------- */
 function linkGlossary(root){
@@ -544,7 +529,7 @@ function stateChip(v){ const k = v >= 3 ? "ok" : v === 2 ? "warn" : ""; return `
 function medal(on){ return `<svg width="52" height="52" viewBox="0 0 52 52" aria-hidden="true"><path d="M17 4h7l4 14h-7zM35 4h-7l-4 14h7z" fill="var(--accent)" opacity="${on?1:.5}"/><circle cx="26" cy="32" r="15" fill="${on?"var(--ok-tint)":"var(--sunk)"}" stroke="${on?"var(--ok)":"var(--line)"}" stroke-width="3"/><path d="M26 24l2.6 5.4 5.9.8-4.3 4.1 1 5.8-5.2-2.8-5.2 2.8 1-5.8-4.3-4.1 5.9-.8z" fill="${on?"var(--ok)":"var(--line)"}"/></svg>`; }
 
 /* ---------- navigation et rendu ---------- */
-function go(name, arg){ view = {name, arg}; if(name !== "prof") confirmReset = false; gloss = null; stopSpeak(); render(); window.scrollTo(0, 0); }
+function go(name, arg){ view = {name, arg}; if(name !== "prof") confirmReset = false; gloss = null; render(); window.scrollTo(0, 0); }
 function render(){
   const tag = document.getElementById("simTag"); tag.hidden = !S.offset; tag.textContent = S.offset ? `Jour simulé +${S.offset}` : "";
   const who = document.getElementById("whoBtn"), p = S.profile;
@@ -629,11 +614,11 @@ function fiche(mid){
   const m = MOD[mid], f = m.fiche; theory(mid).forEach(c => raise(c.id, 1)); S.last = mid; save();
   return `<button class="link" data-act="mod" data-v="${mid}">‹ ${esc(m.titre)}</button>
   <div class="stack"><span class="eyebrow">Fiche de cours${f.duree ? " · " + esc(f.duree) : ""}</span><h1>${esc(m.titre)}</h1></div>
-  ${f.essentiel.length ? `<div class="essentiel"><div class="row"><b class="grow">L'essentiel en 30 secondes</b>${speakBtn("ess-" + mid)}</div><ul>${f.essentiel.map(x => `<li>${esc(x)}</li>`).join("")}</ul></div>` : ""}
+  ${f.essentiel.length ? `<div class="essentiel"><div class="row"><b class="grow">L'essentiel en 30 secondes</b></div><ul>${f.essentiel.map(x => `<li>${esc(x)}</li>`).join("")}</ul></div>` : ""}
   ${m.video ? `<a class="btn ghost block" href="${esc(m.video)}" target="_blank" rel="noopener">Voir la vidéo du formateur</a>` : ""}
   ${f.sections.length ? "" : `<p class="muted">La fiche de ce module arrive bientôt.</p>`}
   <div class="stack">${f.sections.map((x, i) => `<details class="sec" ${i === 0 ? "open" : ""}><summary><span class="num">${i + 1}</span><span>${esc(x.t)}</span>${x.anim && ANIMS[x.anim] ? `<span class="vid">Animation</span>` : ""}<span class="chev" aria-hidden="true">›</span></summary>
-    <div class="secbody" id="sec-${mid}-${i}">${speakBtn(`sec-${mid}-${i}`)}${x.anim && ANIMS[x.anim] ? animFig(x.anim) : ""}${md(x.md)}</div></details>`).join("")}</div>
+    <div class="secbody" id="sec-${mid}-${i}">${x.anim && ANIMS[x.anim] ? animFig(x.anim) : ""}${md(x.md)}</div></details>`).join("")}</div>
   <p class="small muted">Les mots soulignés en pointillé sont expliqués : touche-les.</p>
   <button class="btn block" data-act="practice" data-v="${mid}">M'entraîner maintenant</button>`;
 }
@@ -683,13 +668,12 @@ function quiz(){
       : `<div class="feedback ${s.ok ? "ok" : "ko"}" role="status"><span class="verdict">${s.ok ? "Bonne réponse" : "Pas tout à fait"}</span>${!s.ok || q.type === "ordre" ? sol : ""}<p>${esc(q.explication)}</p></div>`)
       + `<button class="btn block" data-act="next">${s.i + 1 < s.qs.length ? "Question suivante" : "Voir mon résultat"}</button>`;
   }
-  const readTxt = q.enonce + ". " + (["qcm","vf","multi"].includes(q.type) ? q.choix.join(". ") : q.type === "ordre" ? q.choix.join(". ") : "");
   return `<div class="row"><button class="link" data-act="quit">${exam ? "Abandonner" : "Quitter"}</button><span class="grow"></span>
      ${exam ? `<span class="timer" id="timer" aria-label="Temps restant">${EXAM_MIN}:00</span>` : ""}<span class="small muted">${MODE_LBL[s.mode]} · ${s.i + 1}/${s.qs.length}</span></div>
    <div class="progress" aria-hidden="true">${bars}</div>
    <div class="row wrapr"><span class="chip">${typeLbl}</span>${q.critique && !exam ? `<span class="chip bad">Question critique</span>` : ""}<span class="small muted">${esc(MOD[q.module] ? MOD[q.module].court : "")}</span></div>
    ${q.image ? `<img class="qimg" src="${esc(q.image)}" alt="" loading="lazy">` : ""}
-   <p class="qtext">${esc(q.enonce)}</p>${speakBtn("q-" + q.id)}<span hidden id="say-q-${esc(q.id)}">${esc(readTxt)}</span>${body}${fb}`;
+   <p class="qtext">${esc(q.enonce)}</p>${body}${fb}`;
 }
 function result(){
   const r = S.lastResult; if(!r) return home();
@@ -1372,7 +1356,7 @@ function loginView(){
      <p>Révise la techno de ton métier en 5 minutes par jour, sur ton téléphone.</p>
      <div class="row wrapr">${FORMS.map(f => `<span class="chip" style="background:rgba(255,255,255,.18);color:inherit">${esc(f.titre)}</span>`).join("")}</div></div>
    <ul class="feat">
-     <li><b>Fiches courtes</b> avec animations et lecture à voix haute</li>
+     <li><b>Fiches courtes</b> avec animations</li>
      <li><b>Quiz corrigés</b> : QCM, calculs, diagnostics de défauts, réponses écrites</li>
      <li><b>Révisions du jour</b> au bon moment, pour ne rien oublier</li>
      <li><b>Épreuve blanche</b> et suivi de tes compétences, validées par ton formateur</li></ul>
@@ -1478,11 +1462,6 @@ document.addEventListener("click", async e => {
   else if(a === "compare" && s){ const q = QS[s.qs[s.i]], t = norm(s.text); s.auto = q.points.map((p, i) => p.mots.some(m => m && t.includes(norm(m))) ? i : -1).filter(i => i >= 0); s.tick = s.auto.slice(); s.stage = "self"; save(); render(); }
   else if(a === "next") next();
   else if(a === "quit"){ if(s && s.mode === "exam"){ finish(); } else go("home"); }
-  else if(a === "speak"){ const key = v; let txt = "";
-    if(key.startsWith("q-")){ const el = document.getElementById("say-" + key); txt = el ? el.textContent : ""; }
-    else if(key.startsWith("ess-")){ const m = MOD[key.slice(4)]; txt = "L'essentiel. " + m.fiche.essentiel.join(". "); }
-    else { const el = document.getElementById(key); if(el){ const c = el.cloneNode(true); c.querySelectorAll("figure,button.speak").forEach(x => x.remove()); txt = (el.closest("details").querySelector("summary span:nth-child(2)") || {}).textContent + ". " + c.textContent; } }
-    speak(key, txt); }
   else if(a === "gloss"){ gloss = v; render(); }
   else if(a === "glossclose"){ gloss = null; render(); }
   else if(a === "aplay") animToggle(v);
